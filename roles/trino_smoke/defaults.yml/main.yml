@@ -1,0 +1,21 @@
+---
+# Defaults da role (inventory sobrescreve quando precisar)
+trino_scheme: https
+trino_port: 8443
+trino_home: /opt/trino/trino-server-483
+trino_service: trino
+validate_certs: false
+
+# Sonda de integração Trino→OPA — DESLIGADA na Fase 1 (start Trino-only)
+# Ligue com: -e smoke_opa_probe=true  (ou no group_vars quando vier a Fase 2)
+smoke_opa_probe: false
+opa_scheme: http
+opa_host: 143.244.201.207
+opa_port: 8282
+opa_base: "{{ opa_scheme }}://{{ opa_host }}:{{ opa_port }}"
+probe_service_account: trino
+probe_catalog: servico_hive
+probe_schema: ingestedata
+probe_table: teste_csv
+probe_columns:
+  - nome

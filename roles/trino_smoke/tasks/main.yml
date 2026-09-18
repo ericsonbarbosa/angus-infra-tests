@@ -1,0 +1,98 @@
+---
+# ============================================================
+# FASE 1 — Smoke Trino: systemd, porta, REST, drift de config
+# ============================================================
+- name: Coletar fatos de serviços (systemd)
+  ansible.builtin.service_facts:
+
+- name: Assert — serviço {{ trino_service }} running e enabled
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.services[trino_service ~ '.service'] is defined
+      - ansible_facts.services[trino_service ~ '.service'].state == 'running'
+      - ansible_facts.services[trino_service ~ '.service'].status == 'enabled'
+    fail_msg: "FAIL: {{ trino_service }}.service não está running/enabled"
+    success_msg: "OK: systemd — {{ trino_service }}.service running e enabled"
+
+- name: Assert — porta {{ trino_port }} aceitando conexões
+  ansible.builtin.wait_for:
+    host: "127.0.0.1"
+    port: "{{ trino_port }}"
+    timeout: 15
+    msg: "FAIL: porta {{ trino_port }} não aceita conexões em 15s"
+
+- name: GET /v1/info — endpoint REST do Trino
+  ansible.builtin.uri:
+    url: "{{ trino_scheme }}://127.0.0.1:{{ trino_port }}/v1/info"
+    validate_certs: "{{ validate_certs }}"
+    return_content: true
+    status_code: 200
+  register: trino_info
+
+- name: Assert — payload de /v1/info coerente
+  ansible.builtin.assert:
+    that:
+      - trino_info.json.nodeVersion is defined
+      - trino_info.json.environment is defined
+      - trino_info.json.state == 'ACTIVE'
+    fail_msg: "FAIL: payload inesperado em /v1/info: {{ trino_info.json }}"
+    success_msg: "OK: REST — /v1/info 200 (version={{ trino_info.json.nodeVersion.version }}, state={{ trino_info.json.state }})"
+
+- name: Ler access-control.properties (drift test)
+  ansible.builtin.slurp:
+    src: "{{ trino_home }}/etc/access-control.properties"
+  register: ac_props
+
+- name: Assert — wiring OPA presente na config do Trino
+  ansible.builtin.assert:
+    that:
+      - "'access-control.name=opa' in (ac_props.content | b64decode)"
+      - "'opa.policy.uri=' in (ac_props.content | b64decode)"
+      - "'opa.policy.column-masking-uri=' in (ac_props.content | b64decode)"
+      - "'opa.policy.row-filters-uri=' in (ac_props.content | b64decode)"
+    fail_msg: "FAIL: access-control.properties sem wiring OPA completo (drift detectado)"
+    success_msg: "OK: config — access-control.properties com wiring OPA completo"
+
+- name: Assert — processo Java do Trino presente
+  ansible.builtin.command: pgrep -f io.trino.server.TrinoServer
+  register: trino_pid
+  changed_when: false
+  check_mode: false
+  failed_when: trino_pid.rc != 0
+
+# ============================================================
+# Sonda opcional Trino→OPA (smoke_opa_probe: true)
+# ============================================================
+- name: Probe — OPA responde allow para conta de serviço
+  ansible.builtin.uri:
+    url: "{{ opa_base }}/v1/data/portal/authz/allow"
+    method: POST
+    body_format: json
+    body:
+      input:
+        context:
+          identity:
+            user: "{{ probe_service_account }}"
+        action:
+          operation: SelectFromColumns
+          resource:
+            table:
+              catalogName: "{{ probe_catalog }}"
+              schemaName: "{{ probe_schema }}"
+              tableName: "{{ probe_table }}"
+              columns: "{{ probe_columns }}"
+    status_code: 200
+  register: opa_allow
+  delegate_to: localhost
+  become: false
+  when: smoke_opa_probe | bool
+
+- name: Assert — OPA allow=true para conta de serviço
+  ansible.builtin.assert:
+    that:
+      - opa_allow.json.result | default(false) | bool
+    fail_msg: "FAIL: OPA não liberou {{ probe_service_account }}"
+    success_msg: "OK: integração — OPA allow=true"
+  delegate_to: localhost
+  become: false
+  when: smoke_opa_probe | bool

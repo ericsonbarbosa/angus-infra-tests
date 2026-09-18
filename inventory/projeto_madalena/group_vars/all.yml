@@ -1,0 +1,11 @@
+---
+# Conexão SSH (madalena — host do Trino)
+ansible_user: fnadmin
+
+# Trino do projeto madalena
+# Ao subir de versão do Trino, ajuste APENAS trino_home
+trino_home: /opt/trino/trino-server-483
+trino_port: 8443
+trino_scheme: https
+trino_service: trino
+validate_certs: false   # TLS self-signed

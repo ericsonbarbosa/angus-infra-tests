@@ -1,0 +1,7 @@
+---
+- name: "Smoke tests — Trino | projeto madalena"
+  hosts: trino
+  become: true
+  tags: [trino, smoke]
+  roles:
+    - trino_smoke
